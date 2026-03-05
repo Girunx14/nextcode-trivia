@@ -1,0 +1,44 @@
+# =========================
+# Entornos Virtuales
+# =========================
+venv/
+env/
+.env
+.venv/
+Pipfile.lock
+
+# =========================
+# Archivos Compilados de Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Configuración de IDEs y Editores
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Archivos del Sistema Operativo
+# =========================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# =========================
+# Logs y Archivos Temporales
+# =========================
+*.log
+*.tmp
+*.temp
+
+# =========================
+# Modelos y Pesos (opcional)
+# =========================
+# Descomenta esto si en el futuro descargas modelos locales para MediaPipe
+# *.tflite
+# *.pb
