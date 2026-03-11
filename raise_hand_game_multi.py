@@ -5,16 +5,43 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 import cv2
 import mediapipe as mp
+import unicodedata
 
-def draw_panel(frame, x1, y1, x2, y2, alpha=0.70):
+def clean_text(text: str) -> str:
+    if not isinstance(text, str):
+        text = str(text)
+    replacements = {
+        '¿': '', '¡': '!', '✅': '[OK]', '❌': '[X]', '⏱️': '[TIEMPO]', '⏱': '[TIEMPO]',
+        'ñ': 'n', 'Ñ': 'N'
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
+
+def draw_panel(frame, x1, y1, x2, y2, alpha=0.70, color=(0, 0, 0)):
     """Dibuja un rectángulo semitransparente."""
     overlay = frame.copy()
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
     cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
 
+def draw_text_with_shadow(frame, text, pos, font, scale, color, thickness, center=False):
+    """Auxiliar para texto con sombra paralela elegante y AA."""
+    text = clean_text(text)
+    if center:
+        (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+        x = int(pos[0] - tw / 2)
+        y = int(pos[1] + th / 2)
+    else:
+        x, y = int(pos[0]), int(pos[1])
+    # Shadow
+    cv2.putText(frame, text, (x + 2, y + 2), font, scale, (15, 15, 15), thickness, cv2.LINE_AA)
+    # Text
+    cv2.putText(frame, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+    return (x, y)
 
 def draw_wrapped_text(frame, text, x, y, max_width, font, scale, color, thickness, line_gap=8):
-    """Dibuja texto con salto de línea por ancho aproximado."""
+    """Dibuja texto con salto de línea por ancho aproximado, con sombra y AA."""
+    text = clean_text(text)
     words = text.split()
     line = ""
     y_cursor = y
@@ -25,13 +52,13 @@ def draw_wrapped_text(frame, text, x, y, max_width, font, scale, color, thicknes
         if tw <= max_width:
             line = test
         else:
-            cv2.putText(frame, line, (x, y_cursor), font, scale, color, thickness)
+            draw_text_with_shadow(frame, line, (x, y_cursor), font, scale, color, thickness)
             y_cursor += th + line_gap
             line = w
 
     if line:
         (tw, th), _ = cv2.getTextSize(line, font, scale, thickness)
-        cv2.putText(frame, line, (x, y_cursor), font, scale, color, thickness)
+        draw_text_with_shadow(frame, line, (x, y_cursor), font, scale, color, thickness)
         y_cursor += th + line_gap
 
     return y_cursor
@@ -118,6 +145,7 @@ class GameConfig:
     # Modes
     fixed_questions: int = 10
     speed_seconds: int = 120
+    question_seconds: float = 15.0
 
 
 class QuizRaiseHandGame:
@@ -198,24 +226,30 @@ class QuizRaiseHandGame:
 
     def _draw_button(self, frame, btn: RectButton, enabled: bool, hover: bool):
         x1, y1, x2, y2 = btn.rect
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (25, 25, 25), -1)
+        
+        # Fondo premium
+        bg_color = (35, 30, 30) if not hover else (55, 45, 45)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), bg_color, -1)
 
+        # Borde elegante
         if not enabled:
-            border = (120, 120, 120)
-            thick = 2
+            border = (100, 100, 100)
+            thick = 1
         else:
-            border = (0, 255, 255)
-            thick = 4
+            border = (220, 170, 50) # Dorado/Cyan
+            thick = 2
         if hover and enabled:
-            border = (0, 255, 0)
-            thick = 6
+            border = (120, 255, 120) # Verde vibrante
+            thick = 3
 
-        cv2.rectangle(frame, (x1, y1), (x2, y2), border, thick)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), border, thick, cv2.LINE_AA)
 
-        (tw, th), _ = cv2.getTextSize(btn.label, cv2.FONT_HERSHEY_SIMPLEX, 0.95, 2)
-        cx = (x1 + x2) // 2 - tw // 2
-        cy = (y1 + y2) // 2 + th // 2
-        cv2.putText(frame, btn.label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.95, (255, 255, 255), 2)
+        if hover and enabled:
+            draw_panel(frame, x1+thick, y1+thick, x2-thick, y2-thick, alpha=0.1, color=(255,255,255))
+
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        draw_text_with_shadow(frame, btn.label, (cx, cy), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2, center=True)
 
     def _draw_next(self, frame, enabled: bool, hover: bool):
         if self.next_rect is None:
@@ -224,8 +258,8 @@ class QuizRaiseHandGame:
         self._draw_button(frame, btn, enabled, hover)
         if enabled:
             x1, y1, x2, y2 = self.next_rect
-            cv2.putText(frame, "Baja manos y toca con el indice",
-                        (20, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+            draw_text_with_shadow(frame, "Baja las manos y manten el indice apuntando en SIGUIENTE",
+                                  (max(20, x1 - 100), y1 - 15), cv2.FONT_HERSHEY_DUPLEX, 0.6, (220, 220, 220), 1)
 
     def _build_mode_buttons(self, w: int, h: int):
         self.buttons.clear()
@@ -293,8 +327,8 @@ class QuizRaiseHandGame:
             self.current_q = self.question_pool[self.q_index % len(self.question_pool)]
             self.q_index += 1
 
-        # per-question deadline (mantiene ritmo y “presión”)
-        self.round_deadline = time.time() + 5.0  # fijo por ahora; si quieres lo parametrizamos
+        # per-question deadline
+        self.round_deadline = time.time() + self.cfg.question_seconds
         for st in self.states:
             st.answered_this_round = False
             st.hold_start_left = None
@@ -353,17 +387,17 @@ class QuizRaiseHandGame:
                 self.buttons.clear()
 
             # ---------------- HUD Top ----------------
-            cv2.rectangle(frame, (0, 0), (w, 150), (0, 0, 0), -1)
-            cv2.putText(frame, self.banner, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.95, (255, 255, 255), 2)
+            draw_panel(frame, 0, 0, w, 110, alpha=0.85, color=(20, 15, 15))
+            draw_text_with_shadow(frame, self.banner, (20, 40), cv2.FONT_HERSHEY_DUPLEX, 0.9, (255, 235, 200), 2)
 
             if self.mode:
-                cv2.putText(frame, f"Modo: {self.mode}  |  Tema: {self.topic or '—'}",
-                            (20, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (200, 200, 200), 2)
+                draw_text_with_shadow(frame, f"Modo: {self.mode}  |  Tema: {self.topic or '—'}",
+                                      (20, 80), cv2.FONT_HERSHEY_DUPLEX, 0.7, (180, 220, 255), 1)
 
-            # line threshold
-            cv2.line(frame, (0, y_thr), (w, y_thr), (80, 80, 80), 2)
-            cv2.putText(frame, "Mano arriba de esta linea = responde (IZQ/DER)",
-                        (20, y_thr - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 2)
+            # line threshold (Elegante)
+            cv2.line(frame, (0, y_thr), (w, y_thr), (100, 60, 60), 2, cv2.LINE_AA)
+            draw_text_with_shadow(frame, "Zona de Respuesta (Mano Arriba de esta linea = IZQ / DER)",
+                                  (20, y_thr - 10), cv2.FONT_HERSHEY_DUPLEX, 0.55, (200, 150, 150), 1)
 
             # ---------------- Hand detection ----------------
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -391,9 +425,9 @@ class QuizRaiseHandGame:
                     ix = int(lm.landmark[8].x * w)
                     iy = int(lm.landmark[8].y * h)
 
-                    # draw index tip cursor
-                    cv2.circle(frame, (ix, iy), 9, (255, 255, 255), -1)
-                    cv2.circle(frame, (ix, iy), 13, (0, 255, 0), 2)
+                    # draw index tip cursor (Glowing style)
+                    cv2.circle(frame, (ix, iy), 8, (255, 255, 255), -1, cv2.LINE_AA)
+                    cv2.circle(frame, (ix, iy), 14, (0, 200, 255), 2, cv2.LINE_AA)
 
                     index_points.append((ix, iy, conf))
 
@@ -403,9 +437,9 @@ class QuizRaiseHandGame:
                     self.states[p_i].detected_hand = hand_es
 
                     # draw wrist
-                    cv2.circle(frame, (wx, wy), 7, (255, 255, 255), -1)
-                    cv2.putText(frame, f"{hand_es} ({conf:.2f}) J{p_i+1}",
-                                (wx + 10, wy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+                    cv2.circle(frame, (wx, wy), 6, (200, 255, 200), -1, cv2.LINE_AA)
+                    draw_text_with_shadow(frame, f"{hand_es} ({conf:.2f}) J{p_i+1}",
+                                          (wx + 12, wy - 12), cv2.FONT_HERSHEY_DUPLEX, 0.6, (150, 255, 150), 1)
 
                     is_raised = (conf >= self.cfg.min_raise_confidence) and (wy < y_thr)
                     if is_raised:
@@ -459,8 +493,8 @@ class QuizRaiseHandGame:
                 lane_w = w / self.players
                 for i, st in enumerate(self.states):
                     x1 = int(i * lane_w) + 15
-                    cv2.putText(frame, f"J{st.idx} Detectado:{st.detected_hand}",
-                                (x1, 175), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (200, 200, 200), 2)
+                    draw_text_with_shadow(frame, f"J{st.idx} Detectado:{st.detected_hand}",
+                                          (x1, 140), cv2.FONT_HERSHEY_DUPLEX, 0.65, (220, 220, 220), 1)
 
             # B) Play / Pause / End
             else:
@@ -468,56 +502,56 @@ class QuizRaiseHandGame:
                 lane_w = w / self.players
                 for i in range(1, self.players):
                     x = int(i * lane_w)
-                    cv2.line(frame, (x, 150), (x, h), (40, 40, 40), 2)
+                    cv2.line(frame, (x, 110), (x, h), (80, 80, 80), 1, cv2.LINE_AA)
 
                 for i, st in enumerate(self.states):
                     x1 = int(i * lane_w) + 15
-                    cv2.putText(frame, f"J{st.idx}  Pts:{st.score}  Intentos:{st.attempts}  Detectado:{st.detected_hand}",
-                                (x1, 175), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (200, 200, 200), 2)
+                    metrics = f"J{st.idx} | Pts: {st.score} | Int: {st.attempts} | Mano: {st.detected_hand}"
+                    draw_text_with_shadow(frame, metrics,
+                                          (x1, 140), cv2.FONT_HERSHEY_DUPLEX, 0.6, (230, 230, 230), 1)
 
                 if self.phase == "END":
-                    cv2.putText(frame, "FIN", (20, 230), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 255, 255), 3)
-                    cv2.putText(frame, self._winner_text(), (20, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.95, (255, 255, 255), 2)
-                    cv2.putText(frame, "Presiona R para reiniciar (por ahora)", (20, 330),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (200, 200, 200), 2)
+                    draw_text_with_shadow(frame, "FIN DEL JUEGO", (20, 220), cv2.FONT_HERSHEY_DUPLEX, 1.4, (100, 255, 255), 3)
+                    draw_text_with_shadow(frame, self._winner_text(), (20, 280), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 2)
+                    draw_text_with_shadow(frame, "Presiona R para reiniciar interactividad", (20, 330),
+                                          cv2.FONT_HERSHEY_DUPLEX, 0.7, (180, 180, 180), 1)
                 else:
-                    # Timer line
+                    # Timer display (sleek)
                     if self.phase == "PLAY":
                         remaining = max(0.0, self.round_deadline - now)
-                        cv2.putText(frame, f"Tiempo pregunta: {remaining:0.1f}s",
-                                    (20, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+                        draw_text_with_shadow(frame, f"Tiempo: {remaining:0.1f}s",
+                                              (20, 210), cv2.FONT_HERSHEY_DUPLEX, 0.75, (200, 255, 200), 2)
                     else:
-                        cv2.putText(frame, "Tiempo pregunta: PAUSA",
-                                    (20, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+                        draw_text_with_shadow(frame, "Tiempo: PAUSA",
+                                              (20, 210), cv2.FONT_HERSHEY_DUPLEX, 0.75, (180, 180, 180), 1)
 
                     if self.mode == "SPEED2M":
                         rem2 = max(0.0, self.speed_end - now)
-                        cv2.putText(frame, f"Tiempo modo (2 min): {rem2:0.1f}s",
-                                    (20, 265), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 255), 2)
+                        draw_text_with_shadow(frame, f"Global (2 min): {rem2:0.1f}s",
+                                              (20, 245), cv2.FONT_HERSHEY_DUPLEX, 0.75, (100, 200, 255), 1)
                         if now >= self.speed_end:
                             self._end_now()
 
-                    # Current question box
-                    # Caja central de pregunta
-                    px1, py1, px2, py2 = 20, 280, w - 20, 460
-                    draw_panel(frame, px1, py1, px2, py2, alpha=0.70)
-                    cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
+                    # Caja central de pregunta (más elegante)
+                    px1, py1, px2, py2 = max(20, int((w - 900) / 2)), 270, min(w - 20, w - max(20, int((w - 900) / 2))), 470
+                    draw_panel(frame, px1, py1, px2, py2, alpha=0.85, color=(30, 25, 35))
+                    cv2.rectangle(frame, (px1, py1), (px2, py2), (200, 150, 50), 2, cv2.LINE_AA)
 
                     if self.current_q:
                         q = self.current_q["q"]
                         left = self.current_q["left"]
                         right = self.current_q["right"]
 
-                        y = py1 + 35
-                        y = draw_wrapped_text(frame, f"PREGUNTA: {q}", px1 + 15, y, (px2 - px1) - 30,
-                                              cv2.FONT_HERSHEY_SIMPLEX, 0.80, (255, 255, 255), 2)
+                        y = py1 + 40
+                        y = draw_wrapped_text(frame, f"PREGUNTA: {q}", px1 + 25, y, (px2 - px1) - 50,
+                                              cv2.FONT_HERSHEY_DUPLEX, 0.85, (255, 255, 255), 2)
 
-                        y += 10
-                        y = draw_wrapped_text(frame, f"IZQ: {left}", px1 + 15, y, (px2 - px1) - 30,
-                                              cv2.FONT_HERSHEY_SIMPLEX, 0.75, (200, 200, 200), 2)
-
-                        y = draw_wrapped_text(frame, f"DER: {right}", px1 + 15, y, (px2 - px1) - 30,
-                                              cv2.FONT_HERSHEY_SIMPLEX, 0.75, (200, 200, 200), 2)
+                        y += 20
+                        draw_text_with_shadow(frame, f"IZQ: {left}", (px1 + 25, y),
+                                              cv2.FONT_HERSHEY_DUPLEX, 0.8, (180, 220, 255), 2)
+                        y += 35
+                        draw_text_with_shadow(frame, f"DER: {right}", (px1 + 25, y),
+                                              cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 180, 180), 2)
 
                     # Timeouts -> pause and require Next
                     if self.phase == "PLAY" and now >= self.round_deadline:
@@ -569,8 +603,8 @@ class QuizRaiseHandGame:
 
                     # Pause screen + Next button
                     if self.phase == "PAUSE_NEXT":
-                        cv2.putText(frame, self.result_text, (20, 460),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+                        draw_text_with_shadow(frame, self.result_text, (max(20, int((w - 900) / 2)), 510),
+                                              cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
 
                         next_enabled = not any_hand_raised
                         hover = False
@@ -644,12 +678,14 @@ def main():
     ap.add_argument("--line", type=float, default=0.55, help="umbral muñeca (0-1). Menor = mano más arriba")
     ap.add_argument("--hold", type=float, default=0.20, help="segundos sosteniendo mano arriba para contar respuesta")
     ap.add_argument("--next-hold", type=float, default=0.25, help="segundos sosteniendo indice en SIGUIENTE")
+    ap.add_argument("--time", type=float, default=15.0, help="tiempo en segundos para responder a cada pregunta")
     args = ap.parse_args()
 
     cfg = GameConfig(
         wrist_y_threshold_ratio=args.line,
         hold_seconds=args.hold,
         next_hold_seconds=args.next_hold,
+        question_seconds=args.time,
     )
 
     app = QuizRaiseHandGame(
